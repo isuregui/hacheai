@@ -76,11 +76,15 @@ if check_auth():
         prompt_safe = urllib.parse.quote(prompt_descripcion)
         return f"https://image.pollinations.ai/prompt/{prompt_safe}?width=1024&height=1024&nologo=true"
 
-    # --- 5. MOTOR DE VOZ ---
+    # --- 5. MOTOR DE VOZ (Versión Limpia) ---
     async def generar_audio(texto):
         archivo = "temp_voz.mp3"
+        # LIMPIEZA: Quitamos los asteriscos para que no los nombre
+        texto_limpio = texto.replace("*", "") 
+        
         try:
-            communicate = edge_tts.Communicate(texto, "es-AR-TomasNeural")
+            # Usamos el texto limpio para el audio
+            communicate = edge_tts.Communicate(texto_limpio, "es-AR-TomasNeural")
             await communicate.save(archivo)
             with open(archivo, "rb") as f:
                 data = f.read()
