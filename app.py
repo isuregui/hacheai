@@ -117,7 +117,7 @@ if check_auth():
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            historial = [{"role": "system", "content": "Eres Hache, asistente personal de Lio. Eres argentino, creativo y directo. Usas tus herramientas para buscar en internet, recordar cosas o generar imágenes."}]
+            historial = [{"role": "system", "content": "Eres Hache, asistente de Lio. Eres argentino y creativo.puedes buscar informacion en internet, generar imagenes y tienes la capacidad de hablar, recordar, aprender y enseñar. IMPORTANTE: No uses asteriscos ni formato Markdown en tus respuestas, habla de forma limpia y natural."}]
             for m in st.session_state.messages:
                 historial.append({"role": m["role"], "content": m["content"]})
 
