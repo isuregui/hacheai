@@ -11,7 +11,7 @@ from ddgs import DDGS
 from chromadb.utils import embedding_functions
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Hache AI - Lio's Assistant", page_icon="🎨", layout="centered")
+st.set_page_config(page_title="Hache AI - Lio's Assistant", page_icon="🤖", layout="centered")
 
 # --- 2. LOGIN DE SEGURIDAD ---
 def check_auth():
@@ -32,15 +32,24 @@ def check_auth():
     return True
 
 if check_auth():
-    # --- 3. CONFIGURACIÓN DE CEREBRO Y MEMORIA ---
-    # REEMPLAZA CON TU API KEY REAL DE DEEPSEEK
-    DEEPSEEK_API_KEY = "TU_API_KEY_AQUI" 
+    # --- 3. CONFIGURACIÓN DE SEGURIDAD (SECRETS) ---
+    # Esto busca la clave en "Advanced Settings > Secrets" de Streamlit Cloud
+    try:
+        DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+    except:
+        st.error("⚠️ Falta configurar la API KEY en los Secrets de Streamlit.")
+        st.stop()
+
     client = openai.OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-    # Memoria persistente
-    chroma_client = chromadb.PersistentClient(path="./memoria_hache_web")
-    default_ef = embedding_functions.DefaultEmbeddingFunction()
-    collection = chroma_client.get_or_create_collection(name="hache_v3", embedding_function=default_ef)
+    # Memoria persistente en la nube
+    @st.cache_resource
+    def get_memory():
+        chroma_client = chromadb.PersistentClient(path="./memoria_hache_web")
+        default_ef = embedding_functions.DefaultEmbeddingFunction()
+        return chroma_client.get_or_create_collection(name="hache_v3", embedding_function=default_ef)
+    
+    collection = get_memory()
 
     # --- 4. HERRAMIENTAS (FUNCIONES) ---
     def buscar_internet(query):
@@ -54,13 +63,13 @@ if check_auth():
 
     def buscar_memoria(query):
         res = collection.query(query_texts=[query], n_results=2)
-        return "\n".join(res['documents'][0]) if res['documents'][0] else "No tengo recuerdos sobre eso."
+        if res['documents'] and res['documents'][0]:
+            return "\n".join(res['documents'][0])
+        return "No tengo recuerdos sobre eso."
 
     def generar_imagen(prompt_descripcion):
-        # Codificamos el texto para que sea una URL válida
         prompt_safe = urllib.parse.quote(prompt_descripcion)
-        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_safe}?width=1024&height=1024&nologo=true"
-        return url_imagen
+        return f"https://image.pollinations.ai/prompt/{prompt_safe}?width=1024&height=1024&nologo=true"
 
     # --- 5. MOTOR DE VOZ ---
     async def generar_audio(texto):
@@ -70,12 +79,13 @@ if check_auth():
         with open(archivo, "rb") as f:
             data = f.read()
         b64 = base64.b64encode(data).decode()
-        os.remove(archivo)
+        if os.path.exists(archivo):
+            os.remove(archivo)
         return f'<audio autoplay src="data:audio/mp3;base64,{b64}">'
 
     # --- 6. INTERFAZ VISUAL ---
     st.title("🤖 Hache: Mi Asistente")
-    st.subheader("Hola Lio, ¿qué vamos a crear hoy?")
+    st.write(f"Conectado como: **Lio**")
     st.markdown("---")
 
     if "messages" not in st.session_state:
@@ -86,24 +96,24 @@ if check_auth():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if "image" in msg:
-                st.image(msg["image"], caption="Imagen generada por Hache")
+                st.image(msg["image"])
 
     # Entrada de chat
-    if prompt := st.chat_input("Escribe aquí..."):
+    if prompt := st.chat_input("¿Qué hacemos hoy, Lio?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            historial = [{"role": "system", "content": "Eres Hache, asistente de Lio. Eres argentino, creativo y eficiente. Tienes acceso a internet, memoria e IMÁGENES. Si Lio te pide un dibujo o foto, usa generar_imagen."}]
+            historial = [{"role": "system", "content": "Eres Hache, asistente personal de Lio. Eres argentino, creativo y directo. Usas tus herramientas para buscar en internet, recordar cosas o generar imágenes."}]
             for m in st.session_state.messages:
                 historial.append({"role": m["role"], "content": m["content"]})
 
             tools = [
-                {"type": "function", "function": {"name": "buscar_internet", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}},
-                {"type": "function", "function": {"name": "guardar_memoria", "parameters": {"type": "object", "properties": {"d": {"type": "string"}, "e": {"type": "string"}}, "required": ["d", "e"]}}},
-                {"type": "function", "function": {"name": "buscar_memoria", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}},
-                {"type": "function", "function": {"name": "generar_imagen", "description": "Genera una imagen artística basada en una descripción.", "parameters": {"type": "object", "properties": {"p": {"type": "string", "description": "Descripción detallada de la imagen en inglés para mejor calidad"}}, "required": ["p"]}}}
+                {"type": "function", "function": {"name": "buscar_internet", "description": "Busca info actual.", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}},
+                {"type": "function", "function": {"name": "guardar_memoria", "description": "Guarda datos de Lio.", "parameters": {"type": "object", "properties": {"d": {"type": "string"}, "e": {"type": "string"}}, "required": ["d", "e"]}}},
+                {"type": "function", "function": {"name": "buscar_memoria", "description": "Revisa tus recuerdos.", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}},
+                {"type": "function", "function": {"name": "generar_imagen", "description": "Genera una imagen artística.", "parameters": {"type": "object", "properties": {"p": {"type": "string", "description": "Descripción en inglés"}}, "required": ["p"]}}}
             ]
 
             img_url = None
@@ -120,18 +130,26 @@ if check_auth():
                         elif t.function.name == "buscar_memoria": r = buscar_memoria(args['q'])
                         elif t.function.name == "generar_imagen": 
                             img_url = generar_imagen(args['p'])
-                            r = f"Imagen generada con éxito. URL: {img_url}"
+                            r = f"Imagen generada. URL: {img_url}"
                         historial.append({"role": "tool", "tool_call_id": t.id, "name": t.function.name, "content": r})
                 else:
                     texto_ia = msg_ia.content
                     st.markdown(texto_ia)
                     
-                    new_msg = {"role": "assistant", "content": texto_ia}
+                    msg_data = {"role": "assistant", "content": texto_ia}
                     if img_url:
                         st.image(img_url)
-                        new_msg["image"] = img_url
+                        msg_data["image"] = img_url
                     
-                    st.session_state.messages.append(new_msg)
+                    st.session_state.messages.append(msg_data)
+                    
+                    # Ejecutar audio
+                    try:
+                        audio_html = asyncio.run(generar_audio(texto_ia))
+                        st.components.v1.html(audio_html, height=0)
+                    except:
+                        pass
+                    break
                     
                     # Audio
                     html_audio = asyncio.run(generar_audio(texto_ia))
