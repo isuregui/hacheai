@@ -6,12 +6,12 @@ import edge_tts
 import base64
 import os
 import urllib.parse
+import re
 from duckduckgo_search import DDGS 
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Hache - Resultados en Vivo", page_icon="⚽")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Hache - Actualidad Limpia", page_icon="⚽")
 
-# --- LOGIN ---
 def check_auth():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -27,102 +27,76 @@ def check_auth():
     return True
 
 if check_auth():
-    # 🔑 Clave desde Secrets de Streamlit
-    try:
-        DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
-    except:
-        st.error("Falta la API KEY en Secrets.")
-        st.stop()
-
+    DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
     client = openai.OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-    # --- FUNCIÓN DE BÚSQUEDA ---
     def realizar_busqueda(query):
         try:
             with DDGS() as ddgs:
-                # Buscamos específicamente noticias de las últimas 24hs/semana
-                resultados = ddgs.text(f"{query} resultado hoy", max_results=5)
-                if resultados:
-                    texto_web = "\n".join([f"{r['title']}: {r['body']}" for r in resultados])
-                    return texto_web
-                return "No encontré resultados recientes en la web."
-        except Exception as e:
-            return f"Error en la conexión web: {e}"
+                # Buscamos noticias del último tiempo
+                resultados = ddgs.text(f"{query} resultado hoy argentina", max_results=5)
+                return "\n".join([f"{r['title']}: {r['body']}" for r in resultados]) if resultados else "No hay info nueva."
+        except: return "Error de conexión web."
 
-    # --- MOTOR DE VOZ ---
     async def generar_audio(texto):
-        texto_limpio = texto.replace("*", "").replace("#", "")
+        # Limpieza profunda para el audio (sin asteriscos ni etiquetas)
+        texto_limpio = re.sub(r'<.*?>', '', texto).replace("*", "")
         archivo = "hache_voz.mp3"
         try:
             communicate = edge_tts.Communicate(texto_limpio, "es-AR-TomasNeural")
             await communicate.save(archivo)
-            with open(archivo, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode()
-            if os.path.exists(archivo): os.remove(archivo)
-            return b64
+            with open(archivo, "rb") as f: data = f.read()
+            os.remove(archivo)
+            return base64.b64encode(data).decode()
         except: return None
 
-    # --- INTERFAZ DE CHAT ---
-    st.title("🤖 Hache: Modo Actualidad")
-    
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    st.title("🤖 Hache: Filtro de Pensamiento Activo")
+    if "messages" not in st.session_state: st.session_state.messages = []
 
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]):
-            st.markdown(m["content"])
+        with st.chat_message(m["role"]): st.markdown(m["content"])
 
-    if prompt := st.chat_input("¿Cómo salió el partido?"):
+    if prompt := st.chat_input("¿Cómo salió Argentina?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            # Definimos la herramienta de búsqueda para la IA
             tools = [{
                 "type": "function",
                 "function": {
                     "name": "realizar_busqueda",
-                    "description": "Obligatorio para resultados deportivos, noticias de hoy o datos actuales.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"query": {"type": "string"}},
-                        "required": ["query"]
-                    }
+                    "description": "Obligatorio para deportes o noticias de hoy.",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
                 }
             }]
 
-            # 1. PASO: ¿Necesita buscar?
-            historial = [{"role": "system", "content": "Eres Hache, asistente argentino. Si te piden resultados deportivos o noticias de HOY, DEBES usar 'realizar_busqueda'. Luego responde con la info encontrada de forma natural, sin asteriscos."}]
-            for m in st.session_state.messages:
-                historial.append({"role": m["role"], "content": m["content"]})
+            historial = [{"role": "system", "content": "Eres Hache. Responde SIEMPRE como argentino. Si necesitas saber un resultado, USA 'realizar_busqueda'. IMPORTANTE: No muestres etiquetas técnicas ni pensamientos internos en tu respuesta final."}]
+            for m in st.session_state.messages: historial.append({"role": m["role"], "content": m["content"]})
 
-            # Llamada inicial
+            # 1. PASO: Llamada para Herramientas
             response = client.chat.completions.create(model="deepseek-chat", messages=historial, tools=tools)
             msg_ia = response.choices[0].message
 
-            # Si la IA decide buscar (Tool Call)
             if msg_ia.tool_calls:
                 for tool in msg_ia.tool_calls:
                     query_web = json.loads(tool.function.arguments)['query']
-                    with st.status(f"🏟️ Buscando resultado de {query_web}...", expanded=True):
-                        info_encontrada = realizar_busqueda(query_web)
-                        st.write("Información obtenida de la red.")
-                    
+                    with st.status(f"🏟️ Buscando {query_web}..."):
+                        info = realizar_busqueda(query_web)
                     historial.append(msg_ia)
-                    historial.append({"role": "tool", "tool_call_id": tool.id, "name": "realizar_busqueda", "content": info_encontrada})
+                    historial.append({"role": "tool", "tool_call_id": tool.id, "name": "realizar_busqueda", "content": info})
 
-            # 2. PASO: Generar respuesta final con STREAMING
+            # 2. PASO: Respuesta Final con Limpieza de Streaming
             full_res = ""
             placeholder = st.empty()
-            
-            # Segunda llamada (ya con los datos de internet si hubo búsqueda)
             stream = client.chat.completions.create(model="deepseek-chat", messages=historial, stream=True)
             
             for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_res += chunk.choices[0].delta.content
-                    placeholder.markdown(full_res + "▌")
+                content = chunk.choices[0].delta.content
+                if content:
+                    # FILTRO ANTI-PENSAMIENTO INTERNO
+                    if not any(x in content for x in ["<|", "|DSML|", "thought", "<"]):
+                        full_res += content
+                        placeholder.markdown(full_res + "▌")
             
             placeholder.markdown(full_res)
             st.session_state.messages.append({"role": "assistant", "content": full_res})
@@ -130,5 +104,4 @@ if check_auth():
             # 3. PASO: Audio
             b64_audio = asyncio.run(generar_audio(full_res))
             if b64_audio:
-                audio_html = f'<audio autoplay src="data:audio/mp3;base64,{b64_audio}">'
-                st.components.v1.html(audio_html, height=0)
+                st.components.v1.html(f'<audio autoplay src="data:audio/mp3;base64,{b64_audio}">', height=0)
