@@ -1,0 +1,5 @@
+streamlit
+openai
+chromadb
+edge-tts
+duckduckgo-search
