@@ -7,7 +7,8 @@ import edge_tts
 import base64
 import os
 import urllib.parse
-from ddgs import DDGS
+# --- LÍNEA 10 CORREGIDA ---
+from duckduckgo_search import DDGS 
 from chromadb.utils import embedding_functions
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
@@ -33,7 +34,6 @@ def check_auth():
 
 if check_auth():
     # --- 3. CONFIGURACIÓN DE SEGURIDAD (SECRETS) ---
-    # Esto busca la clave en "Advanced Settings > Secrets" de Streamlit Cloud
     try:
         DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
     except:
@@ -42,10 +42,12 @@ if check_auth():
 
     client = openai.OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-    # Memoria persistente en la nube
+    # Memoria persistente
     @st.cache_resource
     def get_memory():
-        chroma_client = chromadb.PersistentClient(path="./memoria_hache_web")
+        # En la nube usamos una ruta absoluta para evitar errores de permisos
+        persist_path = os.path.join(os.getcwd(), "memoria_hache_web")
+        chroma_client = chromadb.PersistentClient(path=persist_path)
         default_ef = embedding_functions.DefaultEmbeddingFunction()
         return chroma_client.get_or_create_collection(name="hache_v3", embedding_function=default_ef)
     
@@ -53,9 +55,12 @@ if check_auth():
 
     # --- 4. HERRAMIENTAS (FUNCIONES) ---
     def buscar_internet(query):
-        with DDGS() as ddgs:
-            res = ddgs.text(query, max_results=3)
-            return "\n".join([f"{r['title']}: {r['body']}" for r in res])
+        try:
+            with DDGS() as ddgs:
+                res = ddgs.text(query, max_results=3)
+                return "\n".join([f"{r['title']}: {r['body']}" for r in res])
+        except Exception as e:
+            return f"Error al buscar en internet: {str(e)}"
 
     def guardar_memoria(dato, etiqueta):
         collection.add(documents=[dato], metadatas=[{"tema": etiqueta}], ids=[str(collection.count()+1)])
@@ -74,14 +79,17 @@ if check_auth():
     # --- 5. MOTOR DE VOZ ---
     async def generar_audio(texto):
         archivo = "temp_voz.mp3"
-        communicate = edge_tts.Communicate(texto, "es-AR-TomasNeural")
-        await communicate.save(archivo)
-        with open(archivo, "rb") as f:
-            data = f.read()
-        b64 = base64.b64encode(data).decode()
-        if os.path.exists(archivo):
-            os.remove(archivo)
-        return f'<audio autoplay src="data:audio/mp3;base64,{b64}">'
+        try:
+            communicate = edge_tts.Communicate(texto, "es-AR-TomasNeural")
+            await communicate.save(archivo)
+            with open(archivo, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode()
+            if os.path.exists(archivo):
+                os.remove(archivo)
+            return f'<audio autoplay src="data:audio/mp3;base64,{b64}">'
+        except:
+            return ""
 
     # --- 6. INTERFAZ VISUAL ---
     st.title("🤖 Hache: Mi Asistente")
@@ -144,14 +152,7 @@ if check_auth():
                     st.session_state.messages.append(msg_data)
                     
                     # Ejecutar audio
-                    try:
-                        audio_html = asyncio.run(generar_audio(texto_ia))
+                    audio_html = asyncio.run(generar_audio(texto_ia))
+                    if audio_html:
                         st.components.v1.html(audio_html, height=0)
-                    except:
-                        pass
-                    break
-                    
-                    # Audio
-                    html_audio = asyncio.run(generar_audio(texto_ia))
-                    st.components.v1.html(html_audio, height=0)
                     break
