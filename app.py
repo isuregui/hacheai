@@ -11,7 +11,7 @@ from duckduckgo_search import DDGS
 from chromadb.utils import embedding_functions
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Hache Turbo", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Hache Real-Time", page_icon="⚽", layout="centered")
 
 def check_auth():
     if "authenticated" not in st.session_state:
@@ -30,27 +30,30 @@ if check_auth():
     DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
     client = openai.OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-    @st.cache_resource
-    def get_memory():
-        path = os.path.join(os.getcwd(), "memoria_hache_web")
-        c = chromadb.PersistentClient(path=path)
-        return c.get_or_create_collection(name="hache_v3", embedding_function=embedding_functions.DefaultEmbeddingFunction())
-    
-    collection = get_memory()
+    # --- FUNCIONES DE HERRAMIENTAS ---
+    def buscar_internet(query):
+        try:
+            with DDGS() as ddgs:
+                # Buscamos noticias muy recientes
+                res = ddgs.text(query, max_results=5)
+                return "\n".join([f"{r['title']}: {r['body']}" for r in res])
+        except:
+            return "No pude conectar con el radar de noticias."
 
-    # --- MOTOR DE AUDIO ---
     async def generar_audio_b64(texto):
         texto_limpio = texto.replace("*", "").replace("#", "")
         archivo = "voz.mp3"
-        communicate = edge_tts.Communicate(texto_limpio, "es-AR-TomasNeural")
-        await communicate.save(archivo)
-        with open(archivo, "rb") as f:
-            data = f.read()
-        os.remove(archivo)
-        return base64.b64encode(data).decode()
+        try:
+            communicate = edge_tts.Communicate(texto_limpio, "es-AR-TomasNeural")
+            await communicate.save(archivo)
+            with open(archivo, "rb") as f: data = f.read()
+            os.remove(archivo)
+            return base64.b64encode(data).decode()
+        except: return None
 
     # --- INTERFAZ ---
-    st.title("⚡ Hache Turbo")
+    st.title("⚽ Hache: Modo Estadio")
+    
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -59,37 +62,50 @@ if check_auth():
             st.markdown(m["content"])
             if "image" in m: st.image(m["image"])
 
-    if prompt := st.chat_input("¿Qué onda, Lio?"):
+    if prompt := st.chat_input("¿Cómo salió Argentina?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            container = st.empty() # Espacio para el texto fluido
-            full_response = ""
-            
-            # Llamada con STREAMING habilitado
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "Eres Hache, asistente argentino. Habla limpio, sin asteriscos ni negritas."}] + 
-                         [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages],
-                stream=True # <--- ESTO ACTIVA LA VELOCIDAD
-            )
+            # 1. PRE-PROCESAMIENTO: ¿Necesita buscar en internet?
+            # Le damos herramientas a la IA
+            tools = [
+                {"type": "function", "function": {"name": "buscar_internet", "description": "Usa esto para resultados deportivos, noticias de hoy o clima.", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}}
+            ]
 
-            for chunk in response:
+            historial = [{"role": "system", "content": "Eres Hache. Si el usuario te pregunta por deportes, noticias o eventos de hoy, TIENES QUE usar buscar_internet. No digas que no sabes, ¡BUSCA! Responde como argentino, sin asteriscos."}]
+            for m in st.session_state.messages:
+                historial.append({"role": m["role"], "content": m["content"]})
+
+            # Primera llamada para ver si quiere usar herramientas
+            response = client.chat.completions.create(model="deepseek-chat", messages=historial, tools=tools)
+            msg_ia = response.choices[0].message
+
+            if msg_ia.tool_calls:
+                for tool in msg_ia.tool_calls:
+                    query_busqueda = json.loads(tool.function.arguments)['q']
+                    st.write(f"🔍 Buscando info real sobre: {query_busqueda}...")
+                    resultado_web = buscar_internet(query_busqueda)
+                    historial.append(msg_ia)
+                    historial.append({"role": "tool", "tool_call_id": tool.id, "name": "buscar_internet", "content": resultado_web})
+
+            # 2. GENERACIÓN CON STREAMING
+            full_response = ""
+            container = st.empty()
+            
+            stream = client.chat.completions.create(model="deepseek-chat", messages=historial, stream=True)
+            
+            for chunk in stream:
                 content = chunk.choices[0].delta.content
                 if content:
                     full_response += content
-                    container.markdown(full_response + "▌") # Efecto de cursor
+                    container.markdown(full_response + "▌")
             
-            container.markdown(full_response) # Texto final sin cursor
-            
-            # Guardamos y disparamos audio al final del streaming (para que sea fluido)
+            container.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
-            # Generación de audio ultra rápida
-            b64_audio = asyncio.run(generar_audio_b64(full_response))
-            audio_html = f'<audio autoplay src="data:audio/mp3;base64,{b64_audio}">'
-            st.components.v1.html(audio_html, height=0)
 
-            # Si el texto sugiere una imagen, podrías invocar la herramienta aquí.
-            # (Para simplificar y acelerar, Hache ahora prioriza responder y hablar).
+            # 3. AUDIO
+            b64_audio = asyncio.run(generar_audio_b64(full_response))
+            if b64_audio:
+                audio_html = f'<audio autoplay src="data:audio/mp3;base64,{b64_audio}">'
+                st.components.v1.html(audio_html, height=0)
