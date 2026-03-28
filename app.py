@@ -14,13 +14,13 @@ from chromadb.utils import embedding_functions
 # --- 1. CONFIGURACIÓN DE INTERFAZ ---
 st.set_page_config(page_title="Hache AI - Sistema Integral", page_icon="🇦🇷", layout="centered")
 
-# Estilos personalizados para una interfaz más amigable
+# Estilos personalizados corregidos
 st.markdown("""
     <style>
     .stChatFloatingInputContainer { background-color: rgba(0,0,0,0); }
     .stChatMessage { border-radius: 15px; margin-bottom: 10px; }
     </style>
-    """, unsafe_content_type=True)
+    """, unsafe_allow_html=True) # <--- CAMBIADO AQUÍ
 
 # --- 2. SEGURIDAD ---
 def check_auth():
